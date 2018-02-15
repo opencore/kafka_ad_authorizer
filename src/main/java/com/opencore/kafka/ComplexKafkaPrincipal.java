@@ -11,8 +11,8 @@ public class ComplexKafkaPrincipal extends KafkaPrincipal{
         super(principalType, name);
     }
 
-    public ComplexKafkaPrincipal(String principalType, String name, boolean tokenauth) {
-        super(principalType, name, tokenauth);
+    public ComplexKafkaPrincipal(KafkaPrincipal kafkaPrincipal) {
+        this(kafkaPrincipal.getPrincipalType(), kafkaPrincipal.getName());
     }
 
     public ComplexKafkaPrincipal(String principalType, String name, List<KafkaPrincipal> additionalPrincipals) {
