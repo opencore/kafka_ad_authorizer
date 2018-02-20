@@ -31,7 +31,7 @@ public class HadoopGroupMappingPrincipalBuilder implements KafkaPrincipalBuilder
       try {
         List<String> groups = groupMapper.getGroups(principalBuilder.build(context).getName());
         for (String group : groups) {
-          groupPrincipals.add(new KafkaPrincipal("group", group));
+          groupPrincipals.add(new KafkaPrincipal("Group", group));
         }
 
       } catch (IOException e) {
