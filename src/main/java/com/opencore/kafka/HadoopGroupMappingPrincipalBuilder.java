@@ -1,59 +1,106 @@
 package com.opencore.kafka;
 
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.Logger;
+import javax.naming.InvalidNameException;
+import javax.naming.ldap.LdapName;
+import javax.naming.ldap.Rdn;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.GroupMappingServiceProvider;
 import org.apache.hadoop.security.ShellBasedUnixGroupsMapping;
 import org.apache.kafka.common.Configurable;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.internals.BrokerSecurityConfigs;
-import org.apache.kafka.common.security.auth.*;
+import org.apache.kafka.common.security.auth.AuthenticationContext;
+import org.apache.kafka.common.security.auth.KafkaPrincipal;
+import org.apache.kafka.common.security.auth.KafkaPrincipalBuilder;
+import org.apache.kafka.common.security.auth.SaslAuthenticationContext;
+import org.apache.kafka.common.security.auth.SslAuthenticationContext;
 import org.apache.kafka.common.security.authenticator.DefaultKafkaPrincipalBuilder;
 import org.apache.kafka.common.security.kerberos.KerberosShortNamer;
 import org.apache.kafka.common.utils.Java;
-
-import javax.security.sasl.SaslServer;
-import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.*;
 import org.apache.kafka.common.utils.Utils;
 
 public class HadoopGroupMappingPrincipalBuilder implements KafkaPrincipalBuilder, Configurable {
+  private Logger principalLogger;
   private GroupMappingServiceProvider groupMapper;
   private DefaultKafkaPrincipalBuilder principalBuilder;
+  private String certificateUserField = "CN";
 
   @Override
   public KafkaPrincipal build(AuthenticationContext context) {
-    List<KafkaPrincipal> groupPrincipals = new ArrayList<>();
+    // Create a base principal by using the DefaultPrincipalBuilder
+    ComplexKafkaPrincipal basePrincipal = new ComplexKafkaPrincipal(principalBuilder.build(context));
 
+    // Resolve username based on what kind of AuthenticationContext the request has
+    // and perform groups lookup
     if (context instanceof SaslAuthenticationContext) {
-      SaslServer saslServer = ((SaslAuthenticationContext) context).server();
-      try {
-        List<String> groups = groupMapper.getGroups(principalBuilder.build(context).getName());
-        for (String group : groups) {
-          groupPrincipals.add(new KafkaPrincipal("Group", group));
-        }
-
-      } catch (IOException e) {
-        // TODO: log an error that groups could not be resolved
-      }
-      return new ComplexKafkaPrincipal(KafkaPrincipal.USER_TYPE, saslServer.getAuthorizationID(), groupPrincipals);
-    } else {
-      // Nothing to do if we are not in a SASL Context, use the default builder to generate
-      // the principal
-      return new ComplexKafkaPrincipal(principalBuilder.build(context));
+      basePrincipal.additionalPrincipals = getGroups(basePrincipal.getName());
+    } else if (context instanceof SslAuthenticationContext) {
+      basePrincipal.additionalPrincipals = getGroups(getUserFromCertificate(basePrincipal.getName()));
     }
+    return basePrincipal;
   }
 
+  private List<KafkaPrincipal> getGroups(String userName) {
+    List<KafkaPrincipal> groupPrincipals = new ArrayList<>();
+    try {
+      // Add user principal to list as well to make later matching easier
+      groupPrincipals.add(new KafkaPrincipal(KafkaPrincipal.USER_TYPE, userName));
+
+      principalLogger.fine("Resolving groups for user: " + userName);
+      List<String> groups = groupMapper.getGroups(userName);
+      principalLogger.fine("Got list of groups for user " + userName + ": " + Utils.join(groups, ", "));
+      for (String group : groups) {
+        groupPrincipals.add(new KafkaPrincipal("Group", group));
+      }
+    } catch (IOException e) {
+      principalLogger.warning("Groups for user " + userName +
+          " could not be resolved, proceeding with authorization based on username only.");
+    }
+    return groupPrincipals;
+  }
+
+  private String getUserFromCertificate(String certificateString) {
+    // For a SslContext the username will look like CN=username;OU=...;DN=...
+    try {
+      LdapName certificateDetails = new LdapName(certificateString);
+      for (Rdn currentRdn : certificateDetails.getRdns()) {
+        if (currentRdn.getType().equalsIgnoreCase(certificateUserField)) {
+          certificateString = currentRdn.getValue().toString();
+        }
+      }
+    } catch (InvalidNameException e) {
+      principalLogger.warning("Error extracting username from String " + certificateString + ": " + e.getMessage());
+    }
+    return certificateString;
+  }
 
   @Override
   public void configure(Map<String, ?> configs) {
-    if (configs.containsKey("principal.builder.groupmapper.class")) {
+    principalLogger = Logger.getLogger("kafka.authorizer.logger");
+
+    // Check if options for the principalbuilder were specified in the broker config
+    Map<String, String> authorizerOptions;
+    if (configs.containsKey("principal.builder.options")) {
+      authorizerOptions = (Map<String, String>) configs.get("principal.builder.options");
+    } else {
+      authorizerOptions = new HashMap<>();
+    }
+
+    if (authorizerOptions.containsKey("mapper.implementation")) {
+      // The user specified a mapper class to be used, try to instantiate an object
       Class mapperClass = null;
       try {
-        mapperClass = Class.forName((String) configs.get("principal.builder.groupmapper.class"));
+        mapperClass = Class.forName(authorizerOptions.get("mapper.implementation"));
       } catch (ClassNotFoundException e) {
-        e.printStackTrace();
+        throw new ConfigException("Couldn't instantiate mapper class for principalbuilder: " + e.getMessage());
       }
 
       if (mapperClass.isAssignableFrom(GroupMappingServiceProvider.class)) {
@@ -62,20 +109,17 @@ public class HadoopGroupMappingPrincipalBuilder implements KafkaPrincipalBuilder
         // Check if it is configurable
         if (mapperClass.isAssignableFrom(org.apache.hadoop.conf.Configurable.class)) {
           // Class can take a configuration object, we create this with all options
-          // from the Kafka config that have the prefix principal.builder.groupmapper.option
-          // by stripping that prefix
-          // TODO: this does not currently do anything, as unknown config properties are
-          // removed from the config by the broker - needs Kafka change
+          // taken from
+          // TODO: this does not currently do anything as no config can be passed to PrincipalBuilders
           Configuration groupMapperConfig = new Configuration();
-          for (String configKey : configs.keySet()) {
-            if (configKey.startsWith("principal.builder.groupmapper.option.")) {
-              String shortKey = configKey.substring(37, configKey.length());
-              String value = (String) configs.get(configKey);
-              // Add trimmed key and value from Kafka config to config for Hadoop Mapper
-              groupMapperConfig.set(shortKey, value);
-              ((org.apache.hadoop.conf.Configurable) groupMapper).setConf(groupMapperConfig);
-            }
+
+          for (String configOption : authorizerOptions.keySet()) {
+            // Remove "mapper.configuration" item, as this was intended for this class,
+            // not the wrapped mapper implementation
+            if (!configOption.equals("mapper.implementation"))
+              groupMapperConfig.set(configOption, authorizerOptions.get(configOption));
           }
+          ((org.apache.hadoop.conf.Configurable) groupMapper).setConf(groupMapperConfig);
         }
       } else {
         throw new ConfigException("Mapper class must implement org.apache.hadoop.security.GroupMappingServiceProvider");
@@ -89,6 +133,7 @@ public class HadoopGroupMappingPrincipalBuilder implements KafkaPrincipalBuilder
     // used to create the username that we then use to lookup the groups
     this.principalBuilder = new DefaultKafkaPrincipalBuilder(getKerberosShortNamer(configs));
   }
+
 
   private KerberosShortNamer getKerberosShortNamer(Map<String, ?> configs) {
     List<String> principalToLocalRules = (List<String>) configs.get(BrokerSecurityConfigs.SASL_KERBEROS_PRINCIPAL_TO_LOCAL_RULES_CONFIG);

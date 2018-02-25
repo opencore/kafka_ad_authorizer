@@ -1,19 +1,19 @@
 /**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+  * Licensed to the Apache Software Foundation (ASF) under one or more
+  * contributor license agreements.  See the NOTICE file distributed with
+  * this work for additional information regarding copyright ownership.
+  * The ASF licenses this file to You under the Apache License, Version 2.0
+  * (the "License"); you may not use this file except in compliance with
+  * the License.  You may obtain a copy of the License at
+  *
+  * http://www.apache.org/licenses/LICENSE-2.0
+  *
+  * Unless required by applicable law or agreed to in writing, software
+  * distributed under the License is distributed on an "AS IS" BASIS,
+  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
 package com.opencore.kafka
 
 import java.util
@@ -46,16 +46,16 @@ object ComplexAclAuthorizer {
   val AllowEveryoneIfNoAclIsFoundProp = "allow.everyone.if.no.acl.found"
 
   /**
-   * The root acl storage node. Under this node there will be one child node per resource type (Topic, Cluster, Group).
-   * under each resourceType there will be a unique child for each resource instance and the data for that child will contain
-   * list of its acls as a json object. Following gives an example:
-   *
-   * <pre>
-   * /kafka-acl/Topic/topic-1 => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
-   * /kafka-acl/Cluster/kafka-cluster => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
-   * /kafka-acl/Group/group-1 => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
-   * </pre>
-   */
+    * The root acl storage node. Under this node there will be one child node per resource type (Topic, Cluster, Group).
+    * under each resourceType there will be a unique child for each resource instance and the data for that child will contain
+    * list of its acls as a json object. Following gives an example:
+    *
+    * <pre>
+    * /kafka-acl/Topic/topic-1 => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
+    * /kafka-acl/Cluster/kafka-cluster => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
+    * /kafka-acl/Group/group-1 => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
+    * </pre>
+    */
   val AclZkPath = ZkUtils.KafkaAclPath
 
   //notification node which gets updated with the resource name when acl on a resource is changed.
@@ -65,6 +65,7 @@ object ComplexAclAuthorizer {
   val AclChangedPrefix = "acl_changes_"
 
   private case class VersionedAcls(acls: Set[Acl], zkVersion: Int)
+
 }
 
 class ComplexAclAuthorizer extends Authorizer with Logging {
@@ -85,8 +86,8 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
   private val retryBackoffJitterMs = 50
 
   /**
-   * Guaranteed to be called before any authorize call is made.
-   */
+    * Guaranteed to be called before any authorize call is made.
+    */
   override def configure(javaConfigs: util.Map[String, _]) {
     val configs = javaConfigs.asScala
     val props = new java.util.Properties()
@@ -107,9 +108,9 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
     val zkSessionTimeOutMs = configs.get(ComplexAclAuthorizer.ZkSessionTimeOutProp).map(_.toString.toInt).getOrElse(kafkaConfig.zkSessionTimeoutMs)
 
     zkUtils = ZkUtils(zkUrl,
-                      sessionTimeout = zkSessionTimeOutMs,
-                      connectionTimeout = zkConnectionTimeoutMs,
-                      kafkaConfig.zkEnableSecureAcls)
+      sessionTimeout = zkSessionTimeOutMs,
+      connectionTimeout = zkConnectionTimeoutMs,
+      kafkaConfig.zkEnableSecureAcls)
     zkUtils.makeSurePersistentPathExists(ComplexAclAuthorizer.AclZkPath)
 
     loadCache()
@@ -167,41 +168,45 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
     } else false
   }
 
-  private def aclMatch(operations: Operation, resource: Resource, principal: KafkaPrincipal, host: String, permissionType: PermissionType, acls: Set[Acl]): Boolean = {
+  private def aclMatch(operations: Operation, resource: Resource, principal: KafkaPrincipal,
+                       host: String, permissionType: PermissionType, acls: Set[Acl]): Boolean = {
     // Build a list of all Principals for this ComplexPrincipal
-
     var allPrincipals = List[KafkaPrincipal]()
-    allPrincipals ::= new KafkaPrincipal(principal.getPrincipalType, principal.getName)
 
-    // Check if this is a ComplexKafkaPrincipal object and add additionalPrincipals if necessary
     if (principal.isInstanceOf[ComplexKafkaPrincipal]) {
-      var principalList = principal.asInstanceOf[ComplexKafkaPrincipal].getGroupMemberships
-      principalList.asScala.foreach(princ => allPrincipals ::= princ)
+      // For a Complexprincipal use the wrapped list
+      allPrincipals = principal.asInstanceOf[ComplexKafkaPrincipal].getGroupMemberships.asInstanceOf[List[KafkaPrincipal]]
+    } else {
+      // For a KafkaPrincipal simply create a list with only that principal
+      allPrincipals ::= new KafkaPrincipal(principal.getPrincipalType, principal.getName)
     }
 
-    // Match principals
+    // Match principals against ACLs
     allPrincipals
       .map(p => singleAclMatch(operations, resource, p, host, permissionType, acls))
       .foldLeft(false)(_ || _)
   }
 
-  private def singleAclMatch (operations: Operation, resource: Resource, principal: KafkaPrincipal, host: String, permissionType: PermissionType, acls: Set[Acl]): Boolean = {
-    acls.find { acl =>
-      acl.permissionType == permissionType &&
-        (acl.principal == principal || acl.principal == Acl.WildCardPrincipal) &&
-        (operations == acl.operation || acl.operation == All) &&
-        (acl.host == host || acl.host == Acl.WildCardHost)
-    }.exists { acl =>
-      authorizerLogger.debug(s"operation = $operations on resource = $resource from host = $host is $permissionType based on acl = $acl")
-      true
+  private def singleAclMatch(operations: Operation, resource: Resource, principal: KafkaPrincipal, host: String, permissionType: PermissionType, acls: Set[Acl]): Boolean = {
+    acls.find {
+      acl =>
+        acl.permissionType == permissionType &&
+          (acl.principal == principal || acl.principal == Acl.WildCardPrincipal) &&
+          (operations == acl.operation || acl.operation == All) &&
+          (acl.host == host || acl.host == Acl.WildCardHost)
+    }.exists {
+      acl =>
+        authorizerLogger.debug(s"operation = $operations on resource = $resource from host = $host is $permissionType based on acl = $acl")
+        true
     }
   }
 
   override def addAcls(acls: Set[Acl], resource: Resource) {
     if (acls != null && acls.nonEmpty) {
       inWriteLock(lock) {
-        updateResourceAcls(resource) { currentAcls =>
-          currentAcls ++ acls
+        updateResourceAcls(resource) {
+          currentAcls =>
+            currentAcls ++ acls
         }
       }
     }
@@ -209,8 +214,9 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
 
   override def removeAcls(aclsTobeRemoved: Set[Acl], resource: Resource): Boolean = {
     inWriteLock(lock) {
-      updateResourceAcls(resource) { currentAcls =>
-        currentAcls -- aclsTobeRemoved
+      updateResourceAcls(resource) {
+        currentAcls =>
+          currentAcls -- aclsTobeRemoved
       }
     }
   }
@@ -232,10 +238,12 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
 
   override def getAcls(principal: KafkaPrincipal): Map[Resource, Set[Acl]] = {
     inReadLock(lock) {
-      aclCache.mapValues { versionedAcls =>
-        versionedAcls.acls.filter(_.principal == principal)
-      }.filter { case (_, acls) =>
-        acls.nonEmpty
+      aclCache.mapValues {
+        versionedAcls =>
+          versionedAcls.acls.filter(_.principal == principal)
+      }.filter {
+        case (_, acls) =>
+          acls.nonEmpty
       }.toMap
     }
   }
@@ -251,7 +259,7 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
     if (zkUtils != null) zkUtils.close()
   }
 
-  private def loadCache()  {
+  private def loadCache() {
     inWriteLock(lock) {
       val resourceTypes = zkUtils.getChildren(ComplexAclAuthorizer.AclZkPath)
       for (rType <- resourceTypes) {
@@ -286,7 +294,7 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
     *
     * Returns a boolean indicating if the content of the ACLs was actually changed.
     *
-    * @param resource the resource to change ACLs for
+    * @param resource   the resource to change ACLs for
     * @param getNewAcls function to transform existing acls to new ACLs
     * @return boolean indicating if a change was made
     */
@@ -306,14 +314,16 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
       val data = Json.encode(Acl.toJsonCompatibleMap(newAcls))
       val (updateSucceeded, updateVersion) =
         if (newAcls.nonEmpty) {
-         updatePath(path, data, currentVersionedAcls.zkVersion)
+          updatePath(path, data, currentVersionedAcls.zkVersion)
         } else {
           trace(s"Deleting path for $resource because it had no ACLs remaining")
           (zkUtils.conditionalDeletePath(path, currentVersionedAcls.zkVersion), 0)
         }
 
       if (!updateSucceeded) {
-        trace(s"Failed to update ACLs for $resource. Used version ${currentVersionedAcls.zkVersion}. Reading data and retrying update.")
+        trace(s"Failed to update ACLs for $resource. Used version ${
+          currentVersionedAcls.zkVersion
+        }. Reading data and retrying update.")
         Thread.sleep(backoffTime)
         currentVersionedAcls = getAclsFromZk(resource)
         retries += 1
@@ -323,11 +333,15 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
       }
     }
 
-    if(!writeComplete)
+    if (!writeComplete)
       throw new IllegalStateException(s"Failed to update ACLs for $resource after trying a maximum of $maxUpdateRetries times")
 
     if (newVersionedAcls.acls != currentVersionedAcls.acls) {
-      debug(s"Updated ACLs for $resource to ${newVersionedAcls.acls} with version ${newVersionedAcls.zkVersion}")
+      debug(s"Updated ACLs for $resource to ${
+        newVersionedAcls.acls
+      } with version ${
+        newVersionedAcls.zkVersion
+      }")
       updateCache(resource, newVersionedAcls)
       updateAclChangedFlag(resource)
       true
@@ -393,4 +407,5 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
       }
     }
   }
+
 }
