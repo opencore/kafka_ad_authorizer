@@ -175,7 +175,7 @@ class ComplexAclAuthorizer extends Authorizer with Logging {
 
     if (principal.isInstanceOf[ComplexKafkaPrincipal]) {
       // For a Complexprincipal use the wrapped list
-      allPrincipals = principal.asInstanceOf[ComplexKafkaPrincipal].getGroupMemberships.asInstanceOf[List[KafkaPrincipal]]
+      allPrincipals = principal.asInstanceOf[ComplexKafkaPrincipal].getPrincipalList.asScala.toList
     } else {
       // For a KafkaPrincipal simply create a list with only that principal
       allPrincipals ::= new KafkaPrincipal(principal.getPrincipalType, principal.getName)

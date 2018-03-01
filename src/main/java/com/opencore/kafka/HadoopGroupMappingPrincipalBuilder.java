@@ -41,9 +41,9 @@ public class HadoopGroupMappingPrincipalBuilder implements KafkaPrincipalBuilder
     // Resolve username based on what kind of AuthenticationContext the request has
     // and perform groups lookup
     if (context instanceof SaslAuthenticationContext) {
-      basePrincipal.additionalPrincipals = getGroups(basePrincipal.getName());
+      basePrincipal.allPrincipals = getGroups(basePrincipal.getName());
     } else if (context instanceof SslAuthenticationContext) {
-      basePrincipal.additionalPrincipals = getGroups(getUserFromCertificate(basePrincipal.getName()));
+      basePrincipal.allPrincipals = getGroups(getUserFromCertificate(basePrincipal.getName()));
     }
     return basePrincipal;
   }
